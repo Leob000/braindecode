@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -18,8 +19,10 @@ from braindecode.preprocessing import (
 )
 from braindecode.util import set_random_seeds
 
+time_start = time.time()
 # Configuration
-SUBJECTS = [1]
+MAX_EPOCHS = 100
+SUBJECTS = [1, 2, 3]
 SEEDS = [0, 1, 2]
 all_types = ["torch", "old_fixed", "old_nonfixed"]
 low_cut_hz = 4.0  # low cut frequency for filtering
@@ -114,7 +117,7 @@ for attention_type in all_types:
             lr = 0.0625 * 0.01
             weight_decay = 0
             batch_size = 64
-            n_epochs = 4
+            n_epochs = MAX_EPOCHS
 
             clf = EEGClassifier(
                 model,
@@ -173,47 +176,47 @@ title_suffix = f"({len(SUBJECTS)} Subjects, {len(SEEDS)} Seeds per subject)"
 
 # Plot Loss
 fig_loss, ax_loss = plt.subplots(figsize=(10, 6))
-colors = ["tab:blue", "tab:orange", "tab:green"]
+
+# distinct colors for Train vs Valid
+colors_dict = {
+    "torch": ("tab:blue", "cornflowerblue"),
+    "old_fixed": ("tab:orange", "sandybrown"),
+    "old_nonfixed": ("tab:green", "limegreen"),
+}
+
+offset_step = 0.05  # Slight shift to avoid overlap
 
 for i, attention_type in enumerate(all_types):
     res = results[attention_type]
     df_mean = res["mean"]
     df_std = res["std"]
-    color = colors[i % len(colors)]
+    c_train, c_valid = colors_dict[attention_type]
+
     epochs = df_mean.index
+    x_offset = (i - 1) * offset_step
 
     # Train Loss
-    ax_loss.plot(
-        epochs,
+    ax_loss.errorbar(
+        epochs + x_offset,
         df_mean["train_loss"],
-        linestyle="-",
-        marker="o",
-        color=color,
+        yerr=df_std["train_loss"],
+        fmt="-o",
+        color=c_train,
         label=f"{attention_type} Train",
-    )
-    ax_loss.fill_between(
-        epochs,
-        df_mean["train_loss"] - df_std["train_loss"],
-        df_mean["train_loss"] + df_std["train_loss"],
-        color=color,
-        alpha=0.2,
+        capsize=3,
+        alpha=0.9,
     )
 
     # Valid Loss
-    ax_loss.plot(
-        epochs,
+    ax_loss.errorbar(
+        epochs + x_offset,
         df_mean["valid_loss"],
-        linestyle=":",
-        marker="x",
-        color=color,
+        yerr=df_std["valid_loss"],
+        fmt=":x",
+        color=c_valid,
         label=f"{attention_type} Valid",
-    )
-    ax_loss.fill_between(
-        epochs,
-        df_mean["valid_loss"] - df_std["valid_loss"],
-        df_mean["valid_loss"] + df_std["valid_loss"],
-        color=color,
-        alpha=0.1,
+        capsize=3,
+        alpha=0.9,
     )
 
 ax_loss.set_xlabel("Epoch", fontsize=14)
@@ -234,41 +237,33 @@ for i, attention_type in enumerate(all_types):
     res = results[attention_type]
     df_mean = res["mean"]
     df_std = res["std"]
-    color = colors[i % len(colors)]
+    c_train, c_valid = colors_dict[attention_type]
+
     epochs = df_mean.index
+    x_offset = (i - 1) * offset_step
 
     # Train Misclassification
-    ax_misc.plot(
-        epochs,
+    ax_misc.errorbar(
+        epochs + x_offset,
         df_mean["train_misclass"],
-        linestyle="-",
-        marker="o",
-        color=color,
+        yerr=df_std["train_misclass"],
+        fmt="-o",
+        color=c_train,
         label=f"{attention_type} Train",
-    )
-    ax_misc.fill_between(
-        epochs,
-        df_mean["train_misclass"] - df_std["train_misclass"],
-        df_mean["train_misclass"] + df_std["train_misclass"],
-        color=color,
-        alpha=0.2,
+        capsize=3,
+        alpha=0.9,
     )
 
     # Valid Misclassification
-    ax_misc.plot(
-        epochs,
+    ax_misc.errorbar(
+        epochs + x_offset,
         df_mean["valid_misclass"],
-        linestyle=":",
-        marker="x",
-        color=color,
+        yerr=df_std["valid_misclass"],
+        fmt=":x",
+        color=c_valid,
         label=f"{attention_type} Valid",
-    )
-    ax_misc.fill_between(
-        epochs,
-        df_mean["valid_misclass"] - df_std["valid_misclass"],
-        df_mean["valid_misclass"] + df_std["valid_misclass"],
-        color=color,
-        alpha=0.1,
+        capsize=3,
+        alpha=0.9,
     )
 
 ax_misc.set_xlabel("Epoch", fontsize=14)
@@ -279,3 +274,4 @@ ax_misc.grid(True)
 fig_misc.tight_layout()
 fig_misc.savefig(output_dir / "misclass_comparison.png", dpi=300)
 plt.close(fig_misc)
+print(f"Experiment completed in (minutes) {(time.time() - time_start) / 60:.2f}")
