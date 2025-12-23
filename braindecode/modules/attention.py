@@ -15,6 +15,7 @@ import math
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from torch import Tensor, nn
@@ -749,4 +750,51 @@ class MultiHeadAttention(nn.Module):
         # nn.MultiheadAttention expects (query, key, value)
         # For self-attention, all are x.
         out, _ = self.mha(x, x, x, attn_mask=mask, need_weights=False)
+        return out
+
+
+class MultiHeadAttention_old(nn.Module):
+    def __init__(
+        self,
+        emb_size,
+        num_heads,
+        dropout=0.0,
+        scaling_fix: bool = False,
+    ):
+        super().__init__()
+        self.emb_size = emb_size
+        self.num_heads = num_heads
+        self.keys = nn.Linear(emb_size, emb_size)
+        self.queries = nn.Linear(emb_size, emb_size)
+        self.values = nn.Linear(emb_size, emb_size)
+        self.att_drop = nn.Dropout(dropout)
+        self.projection = nn.Linear(emb_size, emb_size)
+
+        self.rearrange_stack = Rearrange(
+            "b n (h d) -> b h n d",
+            h=num_heads,
+        )
+        self.rearrange_unstack = Rearrange(
+            "b h n d -> b n (h d)",
+        )
+        self.scaling_fix: bool = scaling_fix
+
+    def forward(self, x: Tensor, mask: Optional[Tensor] = None) -> Tensor:
+        queries = self.rearrange_stack(self.queries(x))
+        keys = self.rearrange_stack(self.keys(x))
+        values = self.rearrange_stack(self.values(x))
+        energy = torch.einsum("bhqd, bhkd -> bhqk", queries, keys)
+        if mask is not None:
+            fill_value = float("-inf")
+            energy = energy.masked_fill(~mask, fill_value)
+
+        if self.scaling_fix:
+            scaling = (self.emb_size // self.num_heads) ** (1 / 2)
+        else:
+            scaling = self.emb_size ** (1 / 2)
+        att = F.softmax(energy / scaling, dim=-1)
+        att = self.att_drop(att)
+        out = torch.einsum("bhal, bhlv -> bhav ", att, values)
+        out = self.rearrange_unstack(out)
+        out = self.projection(out)
         return out

@@ -8,7 +8,11 @@ from einops.layers.torch import Rearrange
 from torch import Tensor, nn
 
 from braindecode.models.base import EEGModuleMixin
-from braindecode.modules import FeedForwardBlock, MultiHeadAttention
+from braindecode.modules import (
+    FeedForwardBlock,
+    MultiHeadAttention,
+)
+from braindecode.modules.attention import MultiHeadAttention_old
 
 
 class EEGConformer(EEGModuleMixin, nn.Module):
@@ -208,6 +212,7 @@ class EEGConformer(EEGModuleMixin, nn.Module):
         chs_info=None,
         input_window_seconds=None,
         sfreq=None,
+        attention_type: str = "torch",
     ):
         super().__init__(
             n_outputs=n_outputs,
@@ -255,6 +260,7 @@ class EEGConformer(EEGModuleMixin, nn.Module):
             num_heads=num_heads,
             att_drop=att_drop_prob,
             activation=activation_transfor,
+            attention_type=attention_type,
         )
 
         self.fc = _FullyConnected(
@@ -368,28 +374,78 @@ class _TransformerEncoderBlock(nn.Sequential):
         att_drop,
         forward_expansion=4,
         activation: type[nn.Module] = nn.GELU,
+        attention_type: str = "torch",
     ):
-        super().__init__(
-            _ResidualAdd(
-                nn.Sequential(
-                    nn.LayerNorm(emb_size),
-                    MultiHeadAttention(emb_size, num_heads, att_drop),
-                    nn.Dropout(att_drop),
-                )
-            ),
-            _ResidualAdd(
-                nn.Sequential(
-                    nn.LayerNorm(emb_size),
-                    FeedForwardBlock(
-                        emb_size,
-                        expansion=forward_expansion,
-                        drop_p=att_drop,
-                        activation=activation,
-                    ),
-                    nn.Dropout(att_drop),
-                )
-            ),
-        )
+        if attention_type == "torch":
+            super().__init__(
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        MultiHeadAttention(emb_size, num_heads, att_drop),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        FeedForwardBlock(
+                            emb_size,
+                            expansion=forward_expansion,
+                            drop_p=att_drop,
+                            activation=activation,
+                        ),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+            )
+        if attention_type == "old_nonfixed":
+            super().__init__(
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        MultiHeadAttention_old(
+                            emb_size, num_heads, att_drop, scaling_fix=False
+                        ),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        FeedForwardBlock(
+                            emb_size,
+                            expansion=forward_expansion,
+                            drop_p=att_drop,
+                            activation=activation,
+                        ),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+            )
+        if attention_type == "old_fixed":
+            super().__init__(
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        MultiHeadAttention_old(
+                            emb_size, num_heads, att_drop, scaling_fix=True
+                        ),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+                _ResidualAdd(
+                    nn.Sequential(
+                        nn.LayerNorm(emb_size),
+                        FeedForwardBlock(
+                            emb_size,
+                            expansion=forward_expansion,
+                            drop_p=att_drop,
+                            activation=activation,
+                        ),
+                        nn.Dropout(att_drop),
+                    )
+                ),
+            )
 
 
 class _TransformerEncoder(nn.Sequential):
@@ -417,11 +473,16 @@ class _TransformerEncoder(nn.Sequential):
         num_heads,
         att_drop,
         activation: type[nn.Module] = nn.GELU,
+        attention_type: str = "torch",
     ):
         super().__init__(
             *[
                 _TransformerEncoderBlock(
-                    emb_size, num_heads, att_drop, activation=activation
+                    emb_size,
+                    num_heads,
+                    att_drop,
+                    activation=activation,
+                    attention_type=attention_type,
                 )
                 for _ in range(num_layers)
             ]
